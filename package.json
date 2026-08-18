@@ -1,8 +1,10 @@
 {
   "name": "cc-cribl-executive-dashboard",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.0",
   "type": "module",
+  "license": "Apache-2.0",
+  "author": "Johan Woger - jwoger@cribl.io",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -28,7 +30,15 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   },
-  "displayName": "Cribl Executive Dashboard",
+  "displayName": "CC Cribl Executive Dashboard",
+  "tags": {
+    "product": [
+      "stream",
+      "search",
+      "edge",
+      "lake"
+    ]
+  },
   "cribl": {
     "type": "app",
     "createAppScriptVersion": "0.4.0"

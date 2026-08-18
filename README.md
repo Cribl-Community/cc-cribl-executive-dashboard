@@ -7,6 +7,13 @@ monitor.
 The app cannot run outside Cribl — the platform injects `window.CRIBL_API_URL` and proxies every
 `fetch()` — so there are two ways to develop it, below.
 
+## Installation
+
+1. Log in to Cribl and then click on **Apps->View All**
+2. Click **Add App->Import from Git**.
+3. Paste the repo url and "latest" for the release tag.
+4. Click **Import**.
+
 ## Develop against the mock
 
 ```sh
