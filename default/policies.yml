@@ -1,0 +1,46 @@
+# Product API access declaration. Declare Cribl product API paths your app needs to access.
+# At install time, admins see exactly which platform resources the app will use.
+#
+# Every path below is read-only (GET), except the two metrics endpoints, which are
+# POST-with-a-query-body reads. The dashboard never writes Cribl configuration; its
+# only writes go to the app-scoped KV store, which is granted automatically.
+
+policies:
+  # Worker Group / Fleet inventory — drives the worker group filter and the
+  # per-group fan-out for all group-scoped calls below.
+  - object: '/master/groups'
+    actions: ['GET']
+  - object: '/products/stream/groups'
+    actions: ['GET']
+  - object: '/products/stream/groups/*'
+    actions: ['GET']
+
+  # Worker Node inventory — "% of healthy systems" and node last-connection time.
+  - object: '/products/stream/workers'
+    actions: ['GET']
+  - object: '/master/workers'
+    actions: ['GET']
+
+  # Source / Destination health, aggregated across Worker Processes.
+  - object: '/m/:gid/system/status/inputs'
+    actions: ['GET']
+  - object: '/m/:gid/system/status/outputs'
+    actions: ['GET']
+
+  # Source / Destination configuration — names, types, and disabled state.
+  - object: '/m/:gid/system/inputs'
+    actions: ['GET']
+  - object: '/m/:gid/system/outputs'
+    actions: ['GET']
+
+  # Volume metrics: ingress/egress time series and 7-day baselines.
+  - object: '/m/:gid/system/metrics/query'
+    actions: ['POST']
+  - object: '/m/:gid/system/metrics/enum'
+    actions: ['POST']
+
+  # Deployment context and license entitlement, used to prefill the credit model.
+  - object: '/system/info'
+    actions: ['GET']
+  - object: '/system/licenses/usage'
+    actions: ['GET']
