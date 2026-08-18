@@ -1,0 +1,157 @@
+/**
+ * SOC / NOC command-center theme.
+ *
+ * The dashboard is dark-only and reads from across a room, so the palette is
+ * specified here as literal values rather than pulled from Capra's ramps: the four
+ * accents and the near-black surfaces were given as exact colors, and Capra's dark
+ * steps do not land on them (its dark panel is a blue-gray `#18191b`, its status
+ * green a mint `#3dd68c`). Everything downstream — Capra's own components, the chart
+ * palette, the layout sheet — reads these variables, so the values still live in
+ * exactly one place, which is what the token rule protects.
+ *
+ * The `.dark` block below re-points Capra's *own* scales at this palette instead of
+ * restyling its components. Capra funnels every neutral surface through one slate
+ * ramp and every status color through one hue ramp, so replacing the ramps retints
+ * cards, drawers, inputs, buttons, and alerts together, and nothing here depends on
+ * a Capra class name or DOM structure.
+ */
+
+:root {
+  /* Surfaces, darkest first: page, panel, raised row. */
+  --soc-bg: #0d1117;
+  --soc-panel: #161b22;
+  --soc-raised: #1c2128;
+  --soc-hover: #21262d;
+
+  /* Hairlines. Chrome is meant to recede, so even the strong border is quiet. */
+  --soc-border: #30363d;
+  --soc-border-strong: #444c56;
+  --soc-grid: #21262d;
+
+  /* Ink: white headlines, light gray body, muted gray labels and axes. */
+  --soc-ink-strong: #f0f6fc;
+  --soc-ink: #c9d1d9;
+  --soc-ink-muted: #8b949e;
+
+  /*
+   * The four accents, and only these four. Green and red are reserved for health
+   * state; amber carries deviation and warning; cyan is the informational series.
+   * Each is paired with a 9-step solid for filled marks and a translucent tint for
+   * pill backgrounds, so no cell ever gets a bright fill.
+   */
+  --soc-good: #3fb950;
+  --soc-good-solid: #238636;
+  --soc-good-tint: #3fb9501f;
+
+  --soc-critical: #f85149;
+  --soc-critical-solid: #da3633;
+  --soc-critical-tint: #f851491f;
+
+  --soc-warning: #d29922;
+  --soc-warning-solid: #9e6a03;
+  --soc-warning-tint: #d299221f;
+
+  --soc-info: #58a6ff;
+  --soc-info-solid: #1f6feb;
+  --soc-info-tint: #58a6ff1f;
+}
+
+/**
+ * Capra's dark scales, re-pointed at the palette above.
+ *
+ * `.dark` is Capra's own dark scope and this sheet loads after it, so these win at
+ * equal specificity. The slate ramp is the whole neutral surface family: step 1 is
+ * the page, 2 the panel, 3–5 raised and hover fills, 6–8 borders, 9–10 solids and
+ * tracks, 11–12 muted and body ink.
+ */
+.dark {
+  --cds2-core-color-slate-1: var(--soc-bg);
+  --cds2-core-color-slate-2: var(--soc-panel);
+  --cds2-core-color-slate-3: var(--soc-raised);
+  --cds2-core-color-slate-4: var(--soc-hover);
+  --cds2-core-color-slate-5: #262c36;
+  --cds2-core-color-slate-6: #2d333b;
+  --cds2-core-color-slate-7: var(--soc-border);
+  --cds2-core-color-slate-8: var(--soc-border-strong);
+  --cds2-core-color-slate-9: #6e7681;
+  --cds2-core-color-slate-10: #7d8590;
+  --cds2-core-color-slate-11: var(--soc-ink-muted);
+  --cds2-core-color-slate-12: var(--soc-ink);
+  --cds2-core-color-slate-surface: var(--soc-panel);
+
+  /*
+   * A panel is a flat near-black rectangle with a 1px border, so the translucent
+   * black Capra uses for a card surface — which would sit *darker* than the page —
+   * is replaced by the panel color itself.
+   */
+  --cds2-color-background-surface: var(--soc-panel);
+
+  /* Status ramps: solid for fills, 11 for text and icons, 2–3 for subtle tints. */
+  --cds2-core-color-green-2: #0d1f16;
+  --cds2-core-color-green-3: #12321f;
+  --cds2-core-color-green-9: var(--soc-good-solid);
+  --cds2-core-color-green-10: #2ea043;
+  --cds2-core-color-green-11: var(--soc-good);
+  --cds2-core-color-green-12: #7ee787;
+  --cds2-core-color-green-surface: var(--soc-good-tint);
+
+  --cds2-core-color-red-2: #1f1315;
+  --cds2-core-color-red-3: #3c1618;
+  --cds2-core-color-red-9: var(--soc-critical-solid);
+  --cds2-core-color-red-10: #f0453f;
+  --cds2-core-color-red-11: var(--soc-critical);
+  --cds2-core-color-red-12: #ffa198;
+  --cds2-core-color-red-surface: var(--soc-critical-tint);
+
+  --cds2-core-color-amber-2: #1c1710;
+  --cds2-core-color-amber-3: #2e2005;
+  --cds2-core-color-amber-9: var(--soc-warning-solid);
+  --cds2-core-color-amber-10: #bb8009;
+  --cds2-core-color-amber-11: var(--soc-warning);
+  --cds2-core-color-amber-12: #e3b341;
+  --cds2-core-color-amber-surface: var(--soc-warning-tint);
+
+  --cds2-core-color-blue-2: #0e1826;
+  --cds2-core-color-blue-3: #0d2847;
+  --cds2-core-color-blue-9: var(--soc-info-solid);
+  --cds2-core-color-blue-10: #388bfd;
+  --cds2-core-color-blue-11: var(--soc-info);
+  --cds2-core-color-blue-12: #a5d6ff;
+  --cds2-core-color-blue-surface: var(--soc-info-tint);
+}
+
+/**
+ * Filter checkboxes, in the dashboard's own state vocabulary.
+ *
+ * Capra's checked box is a solid accent square with a white glyph: on this page that
+ * is the brightest thing in a popover of gray text, and it reads as a web form where
+ * every other state here reads as a console — a tinted background with accent-colored
+ * ink, the way the status pills do. These are the variables its checkbox reads.
+ *
+ * The overrides sit on the app's own wrapper rather than on a Capra selector: custom
+ * properties inherit, so the checkbox picks them up without any rule depending on its
+ * class names or DOM, and Capra's primary button keeps its own contrast ink — which is
+ * the same variable, and would otherwise turn cyan on cyan.
+ */
+.multiselect-options {
+  /* The empty box: a raised square, its border quiet enough to recede. */
+  --cds2-color-background-surface: var(--soc-raised);
+  --cds2-border-default: 1px solid var(--soc-border-strong);
+
+  /*
+   * The checked box: cyan tint under a cyan check. Capra drops the border when a box
+   * is checked, so the tint is mixed into the square's own color at a heavier ratio
+   * than the status pills use — the fill is the only thing left to draw the edge, and
+   * a 12% wash over the panel would leave the check floating on a wall monitor.
+   */
+  --cds2-color-background-accent-indicator: color-mix(in srgb, var(--soc-info) 25%, var(--soc-raised));
+  --cds2-color-foreground-accent-contrast: var(--soc-info);
+  --cds2-color-border-accent-strong: var(--soc-info);
+}
+
+/* The page itself, so the area outside the dashboard grid is the same near-black. */
+html,
+body {
+  background-color: var(--soc-bg);
+  color: var(--soc-ink);
+}

@@ -1,0 +1,607 @@
+/**
+ * Layout and non-Capra primitives.
+ *
+ * Capra components carry their own styling and are not given classes; everything
+ * here is either a layout wrapper around them or a primitive Capra does not
+ * provide (table, meter key, chart frame).
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------- page shell */
+
+/*
+ * Wall-monitor density: uniform `md` gaps everywhere, a tighter page margin than a
+ * document would use, and no narrow measure — the screen is meant to be filled with
+ * information, not centred prose.
+ */
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.md');
+  max-width: 1920px;
+  margin: 0 auto;
+  padding: token('spacing.lg');
+  background-color: var(--soc-bg);
+}
+
+.dashboard-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: token('spacing.md');
+}
+
+.dashboard-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.xs');
+}
+
+.dashboard-header-actions {
+  display: flex;
+  align-items: center;
+  gap: token('spacing.sm');
+}
+
+/* Filters live in one row above the charts, in the order they narrow the data. */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: token('spacing.md');
+  padding: token('spacing.sm') token('spacing.md');
+  border: 1px solid var(--soc-border);
+  border-radius: token('radius.md');
+  background-color: var(--soc-panel);
+}
+
+.filter-bar-field {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.xs');
+  min-width: 180px;
+}
+
+.filter-bar-spacer {
+  flex: 1 1 auto;
+}
+
+.dashboard-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: token('spacing.md');
+  padding: token('spacing.xl');
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.md');
+}
+
+/*
+ * A section label, not a headline: muted and upper-cased like a console heading.
+ * Size and weight come from the Capra text variant inside; color and case are
+ * inherited properties, so they apply without reaching into the component.
+ */
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  gap: token('spacing.sm');
+  color: var(--soc-ink-muted);
+  text-transform: uppercase;
+}
+
+/*
+ * Panels in one row share a height — a ragged row of cards reads as broken on a wall
+ * display — so the grid stretches its children and each panel fills its cell.
+ */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: token('spacing.md');
+  align-items: stretch;
+}
+
+.card-grid > * {
+  height: 100%;
+}
+
+.card-grid--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.md');
+}
+
+/* Stacks the pieces inside one card — an alert above its tiles, a note below them. */
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.md');
+}
+
+/* ------------------------------------------------------------------------ fields */
+
+/* Label above control, for the native inputs Capra has no component for. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.xs');
+  min-width: 0;
+}
+
+/*
+ * Capra ships no date field that works here — `@internationalized/date` is only a
+ * transitive dependency — so the native control is dressed to match a text input
+ * using the same tokens Capra's own inputs read.
+ */
+.date-input {
+  width: 100%;
+  min-height: 32px;
+  padding: token('spacing.xs') token('spacing.sm');
+  border: token('border.default');
+  border-radius: token('radius.md');
+  background-color: token('color.background.surface');
+  color: token('color.foreground.default');
+  font: inherit;
+}
+
+.date-input:focus-visible {
+  outline: 2px solid token('color.border.focus');
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------------- stat tiles */
+
+/*
+ * Tiles split the panel evenly and centre in their own share of it.
+ *
+ * A grid of `auto-fit` tracks laid three tiles into the first three of eight columns
+ * and left the right third of the panel empty; flexing every tile from the same basis
+ * means the row always spans the panel, whether it holds three tiles or four.
+ */
+.tile-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: token('spacing.lg');
+}
+
+.tile-row > * {
+  flex: 1 1 160px;
+  align-items: center;
+  text-align: center;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.xs');
+  min-width: 0;
+}
+
+/*
+ * The headline number: white by default, state-colored where the tile has a state.
+ * The `<p>` Capra renders inside would otherwise inherit body ink, which is a shade
+ * too quiet to be the brightest thing in a panel.
+ */
+.stat-value {
+  color: var(--soc-ink-strong);
+}
+
+.stat-value--good {
+  color: var(--soc-good);
+}
+
+.stat-value--warning {
+  color: var(--soc-warning);
+}
+
+.stat-value--critical {
+  color: var(--soc-critical);
+}
+
+/* Neutral means "no reading available" — a colorless value, not a gray one. */
+.stat-value--neutral {
+  color: var(--soc-ink);
+}
+
+.stat-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: token('spacing.xs');
+}
+
+.sparkline {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: token('spacing.xs');
+}
+
+/* ----------------------------------------------------------------------- charts */
+
+.chart-block {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.sm');
+  min-width: 0;
+}
+
+/*
+ * A label sits beside its own line end, which can be inside the plot when the line
+ * stops early — so it carries a surface-colored halo and stays readable wherever it
+ * lands, instead of being read through a grid line or another series.
+ */
+.chart-end-label {
+  fill: token('color.foreground.default');
+  font-size: 12px;
+  paint-order: stroke fill;
+  stroke: token('color.background.surface');
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.chart-axis-zero {
+  stroke: token('color.border.neutral.default');
+  stroke-width: 1;
+}
+
+.deviation-bar {
+  display: block;
+  overflow: visible;
+}
+
+/* ----------------------------------------------------------------------- status */
+
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: token('spacing.xs');
+}
+
+/*
+ * Layout only. Color belongs to the `--level` classes in `viz.css`; a `color: inherit`
+ * here would load later and quietly beat them, leaving every icon in body ink.
+ */
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+/*
+ * A pill, for the states that have to be found rather than read: the tint is 12%
+ * over the panel — enough to locate a disconnected row down a long table without
+ * putting a bright block in a cell — and the ink is the state color, so the whole
+ * indicator (icon, text, background) says the same thing.
+ *
+ * `color` is set on the pill rather than on the text: the icon inherits it, and so
+ * does the Capra `Text` inside, whose own color defaults to `inherit`.
+ */
+.status-indicator--pill {
+  padding: 1px token('spacing.sm') 1px token('spacing.xs');
+  border-radius: token('radius.full');
+}
+
+.status-indicator--pill.status-indicator--critical {
+  background-color: var(--soc-critical-tint);
+  color: var(--soc-critical);
+}
+
+.status-indicator--pill.status-indicator--warning {
+  background-color: var(--soc-warning-tint);
+  color: var(--soc-warning);
+}
+
+.health-meter {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.sm');
+}
+
+.meter-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: token('spacing.md');
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.meter-key li {
+  display: flex;
+  align-items: center;
+  gap: token('spacing.xs');
+}
+
+/* ----------------------------------------------------------------------- tables */
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+}
+
+.data-table-caption {
+  padding-bottom: token('spacing.sm');
+  color: token('color.foreground.subtle');
+  text-align: start;
+}
+
+.data-table th,
+.data-table td {
+  padding: token('spacing.xs') token('spacing.sm');
+  text-align: start;
+  vertical-align: top;
+}
+
+/*
+ * Cells hold a mix of plain strings and Capra `Text`, and only the latter carries a
+ * size — so the sheet states the small body size the components use, and a group name
+ * stops rendering a third larger than the id beside it.
+ */
+.data-table td {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/*
+ * Column headers read as a console label rather than a row of content: small, muted,
+ * upper-cased, with the only rule on the table separating them from the data.
+ */
+.data-table th {
+  border-bottom: 1px solid var(--soc-border);
+  color: var(--soc-ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/*
+ * Zebra striping instead of row borders. On a dark surface a full grid of hairlines
+ * turns into visual noise at wall-monitor distance, while a barely-there tint still
+ * lets the eye track a long row across seven columns.
+ */
+.data-table tbody tr:nth-child(even) {
+  background-color: var(--soc-raised);
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--soc-hover);
+}
+
+.cell--numeric {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cell-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: token('spacing.xs');
+}
+
+/*
+ * A cell holding a status above its explanation. `flex-start` matters: a stretching
+ * column would pull the status pill's background across the whole column width and
+ * turn a badge into a banner.
+ */
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: token('spacing.xs');
+}
+
+.table-empty {
+  padding: token('spacing.md');
+}
+
+/* ---------------------------------------------------------------- drill-down card */
+
+/*
+ * A whole card that opens a drawer.
+ *
+ * The card's only control is the title button, stretched over the card with a
+ * pseudo-element: one hit target the size of the card, one thing for a screen
+ * reader to announce, and no nested interactive elements inside the card. The
+ * hover and focus treatments sit on the card rather than the text, so the affordance
+ * matches the hit area — `:has` is what lets the card react to its own button.
+ */
+.drilldown-card {
+  position: relative;
+  transition: border-color 120ms ease-out;
+}
+
+.drilldown-card:hover {
+  border-color: token('color.border.neutral.strong');
+  cursor: pointer;
+}
+
+.drilldown-card:has(.drilldown-trigger:focus-visible) {
+  outline: 2px solid token('color.border.focus');
+  outline-offset: 1px;
+}
+
+/*
+ * The same pattern at tile scale, inside a card that is not itself a drill-down: the
+ * tile is the hit area, and the label underlines on hover so a tile that opens
+ * something is distinguishable from the tiles beside it that do not.
+ */
+.drilldown-tile {
+  position: relative;
+}
+
+.drilldown-tile:hover {
+  cursor: pointer;
+}
+
+.drilldown-tile:hover .drilldown-trigger {
+  text-decoration: underline;
+}
+
+.drilldown-tile:has(.drilldown-trigger:focus-visible) {
+  outline: 2px solid token('color.border.focus');
+  outline-offset: 4px;
+  border-radius: token('radius.md');
+}
+
+.drilldown-trigger {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The stretched hit area. Outlined on the card above, so none is drawn here. */
+.drilldown-trigger::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.drilldown-trigger:focus-visible {
+  outline: none;
+}
+
+/* ------------------------------------------------------------------ multiselect */
+
+.multiselect-panel {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.sm');
+  min-width: 260px;
+  max-width: 360px;
+}
+
+.multiselect-actions {
+  display: flex;
+  gap: token('spacing.sm');
+}
+
+.multiselect-options {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.xs');
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.multiselect-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: token('spacing.sm');
+}
+
+/* -------------------------------------------------------------------- settings */
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.lg');
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.md');
+}
+
+/* A real fieldset/legend so the exclusion checkboxes are announced as one group. */
+.settings-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.sm');
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-fieldset legend {
+  padding: 0;
+}
+
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: token('spacing.sm');
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: token('spacing.md');
+}
+
+.settings-alias-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: token('spacing.md');
+  align-items: center;
+}
+
+/*
+ * Verbatim API request and response, for reading field names off. Monospace and
+ * scrollable rather than wrapped: a JSON row folded mid-key is harder to compare
+ * against a metric name than one that scrolls.
+ */
+.diagnostics-code {
+  max-height: 260px;
+  margin: 0;
+  padding: token('spacing.sm');
+  overflow: auto;
+  border: token('border.default');
+  border-radius: token('radius.md');
+  background-color: token('color.background.neutral.subtle');
+  color: token('color.foreground.default');
+  font-family: token('core.fontFamily.mono');
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diagnostics-list {
+  display: flex;
+  flex-direction: column;
+  gap: token('spacing.sm');
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

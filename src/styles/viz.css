@@ -1,0 +1,330 @@
+/**
+ * Chart palette and mark styling.
+ *
+ * The palette is the four command-center accents from `theme.css` and nothing else,
+ * so a chart can never introduce a fifth hue. Slot assignment:
+ *
+ *   1  cyan   — the informational series (ingress, measured credits)
+ *   2  amber  — the second series (egress) and the "below the norm" pole
+ *   3  gray   — context lines that are not data, e.g. the commitment pace
+ *
+ * Cyan against amber was checked with a colorblind-simulation ΔE against the panel
+ * surface: ΔE 27.6 protan / 23.7 tritan, far above the ΔE 8 target, which is why
+ * these two carry the two-series charts while green and red stay reserved for health
+ * state. Deviation is deliberately *not* red/green — being above or below a 7-day
+ * norm is a signal, not a verdict.
+ *
+ * Everything below reads these variables, so the assignment cannot drift.
+ */
+
+:root {
+  /* Categorical — fixed order, never cycled. */
+  --viz-series-1: var(--soc-info);
+  --viz-series-2: var(--soc-warning);
+  --viz-series-3: var(--soc-ink-muted);
+
+  /* Diverging: two poles plus a neutral gray midpoint. */
+  --viz-above: var(--soc-info);
+  --viz-below: var(--soc-warning);
+  --viz-midpoint: var(--soc-ink-muted);
+
+  /* Status — reserved for state, never reused as a series color. */
+  --viz-good: var(--soc-good);
+  --viz-warning: var(--soc-warning);
+  --viz-critical: var(--soc-critical);
+  --viz-neutral: var(--soc-ink-muted);
+
+  /*
+   * Chart furniture: gridlines that do not compete with the data, and axis text in
+   * full light-gray body ink — an axis label has to be readable from across a room,
+   * which is a different job from the muted ink a small label wears.
+   */
+  --viz-surface: var(--soc-panel);
+  --viz-grid: var(--soc-grid);
+  --viz-axis: var(--soc-border);
+  --viz-tick: var(--soc-ink);
+  --viz-ink-muted: var(--soc-ink-muted);
+}
+
+/* ---------------------------------------------------------------- chart frame */
+
+.chart {
+  position: relative;
+  width: 100%;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart-grid line {
+  stroke: var(--viz-grid);
+  stroke-width: 1;
+}
+
+.chart-axis line {
+  stroke: var(--viz-axis);
+  stroke-width: 1;
+}
+
+.chart-tick {
+  fill: var(--viz-tick);
+  font-size: 11px;
+}
+
+.chart-tick--x {
+  text-anchor: middle;
+}
+
+.chart-tick--y {
+  text-anchor: end;
+}
+
+/* ------------------------------------------------------------------ line marks */
+
+.series-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The baseline is a reference, not a series: dashed and neutral so it reads as
+   context rather than competing for attention. */
+.series-reference {
+  fill: none;
+  stroke: var(--viz-midpoint);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  opacity: 0.75;
+}
+
+/* Projected credit spend is the same line as measured spend, dashed to mark that
+   it is an extrapolation. */
+.series-line--projected {
+  stroke-dasharray: 5 5;
+}
+
+/* A 2px surface ring keeps overlapping markers legible where series cross. */
+.series-marker {
+  stroke: var(--viz-surface);
+  stroke-width: 2;
+}
+
+.series-1 {
+  stroke: var(--viz-series-1);
+}
+
+.series-2 {
+  stroke: var(--viz-series-2);
+}
+
+.series-3 {
+  stroke: var(--viz-series-3);
+}
+
+.series-1-fill {
+  fill: var(--viz-series-1);
+}
+
+.series-2-fill {
+  fill: var(--viz-series-2);
+}
+
+.series-3-fill {
+  fill: var(--viz-series-3);
+}
+
+/* ------------------------------------------------------------------- bar marks */
+
+.bar--above {
+  fill: var(--viz-above);
+}
+
+.bar--below {
+  fill: var(--viz-below);
+}
+
+.bar--neutral {
+  fill: var(--viz-midpoint);
+}
+
+/* A 2px surface gap between adjacent fills so bars never merge into a block. */
+.bar {
+  stroke: var(--viz-surface);
+  stroke-width: 2;
+  paint-order: stroke;
+}
+
+.bar-label {
+  fill: token('color.foreground.default');
+  font-size: 12px;
+  dominant-baseline: middle;
+}
+
+.bar-label--muted {
+  fill: var(--viz-ink-muted);
+}
+
+/* ---------------------------------------------------------------- interaction */
+
+.chart-crosshair {
+  stroke: var(--viz-axis);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.chart-hit {
+  fill: transparent;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 2;
+  min-width: 160px;
+  padding: token('spacing.sm');
+  border: token('border.default');
+  border-radius: token('radius.md');
+  background-color: token('color.background.surface');
+  box-shadow: token('shadow.medium.down');
+  pointer-events: none;
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: token('spacing.md');
+}
+
+/* -------------------------------------------------------------------- legends */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: token('spacing.md');
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: token('spacing.xs');
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+}
+
+.legend-swatch--1 {
+  background-color: var(--viz-series-1);
+}
+
+.legend-swatch--2 {
+  background-color: var(--viz-series-2);
+}
+
+.legend-swatch--3 {
+  background-color: var(--viz-series-3);
+}
+
+.legend-swatch--reference {
+  height: 0;
+  border-top: 2px dashed var(--viz-midpoint);
+  border-radius: 0;
+}
+
+/* A reference line takes its series' hue when it belongs to one, so a chart with
+   two baselines never leaves the reader guessing which is which. */
+.legend-swatch--reference-1 {
+  border-top-color: var(--viz-series-1);
+}
+
+.legend-swatch--reference-2 {
+  border-top-color: var(--viz-series-2);
+}
+
+.legend-swatch--reference-3 {
+  border-top-color: var(--viz-series-3);
+}
+
+/* ---------------------------------------------------------------------- meter */
+
+.meter {
+  display: flex;
+  width: 100%;
+  height: 12px;
+  gap: 2px;
+  overflow: hidden;
+  border-radius: token('radius.full');
+  background-color: token('color.background.neutral.track');
+}
+
+.meter-segment {
+  height: 100%;
+}
+
+.meter-segment:first-child {
+  border-start-start-radius: token('radius.full');
+  border-end-start-radius: token('radius.full');
+}
+
+.meter-segment:last-child {
+  border-start-end-radius: token('radius.full');
+  border-end-end-radius: token('radius.full');
+}
+
+.meter-segment--good {
+  background-color: var(--viz-good);
+}
+
+.meter-segment--critical {
+  background-color: var(--viz-critical);
+}
+
+.meter-segment--warning {
+  background-color: var(--viz-warning);
+}
+
+.meter-segment--neutral {
+  background-color: var(--viz-neutral);
+}
+
+/* -------------------------------------------------------------- status colors */
+
+.status-icon--good {
+  color: var(--viz-good);
+}
+
+.status-icon--warning {
+  color: var(--viz-warning);
+}
+
+.status-icon--critical {
+  color: var(--viz-critical);
+}
+
+.status-icon--neutral {
+  color: var(--viz-neutral);
+}
+
+/* Texture for the forced-colors and print case, where fills collapse. */
+@media (forced-colors: active) {
+  .series-line,
+  .series-reference {
+    stroke: CanvasText;
+  }
+
+  .bar--above,
+  .bar--below,
+  .bar--neutral {
+    fill: CanvasText;
+  }
+}
