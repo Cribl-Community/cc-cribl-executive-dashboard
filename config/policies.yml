@@ -1,9 +1,11 @@
 # Product API access declaration. Declare Cribl product API paths your app needs to access.
 # At install time, admins see exactly which platform resources the app will use.
 #
-# Every path below is read-only (GET), except the two metrics endpoints, which are
-# POST-with-a-query-body reads. The dashboard never writes Cribl configuration; its
-# only writes go to the app-scoped KV store, which is granted automatically.
+# Every path below is read-only (GET), except the Cribl Search job endpoints, which
+# create and read an asynchronous search job (a read of the `cribl_metrics` dataset —
+# the job mutates no Cribl configuration). The dashboard never writes Cribl
+# configuration; its only writes go to the app-scoped KV store, which is granted
+# automatically.
 
 policies:
   # Worker Group / Fleet inventory — drives the worker group filter and the
@@ -33,11 +35,14 @@ policies:
   - object: '/m/:gid/system/outputs'
     actions: ['GET']
 
-  # Volume metrics: ingress/egress time series and 7-day baselines.
-  - object: '/m/:gid/system/metrics/query'
+  # Volume metrics via Cribl Search: ingress/egress time series and 7-day baselines
+  # read from the `cribl_metrics` dataset. Search endpoints are addressed under the
+  # `default_search` group id; the job is created (POST), then polled and paged (GET),
+  # and cancelled on teardown (POST /cancel), so both verbs are needed on the subpath.
+  - object: '/m/:gid/search/jobs'
     actions: ['POST']
-  - object: '/m/:gid/system/metrics/enum'
-    actions: ['POST']
+  - object: '/m/:gid/search/jobs/*'
+    actions: ['GET', 'POST']
 
   # Deployment context and license entitlement, used to prefill the credit model.
   - object: '/system/info'

@@ -44,8 +44,23 @@ type RequestOptions = {
   signal?: AbortSignal;
   method?: 'GET' | 'POST' | 'PUT';
   body?: unknown;
+  /**
+   * A pre-serialized body sent verbatim, without JSON.stringify. The KV store is a
+   * plain-text store behind a proxy that mangles `application/json` object bodies
+   * (see kvSet), so it is written as a `text/plain` string through this.
+   */
+  rawBody?: string;
+  /** Request Content-Type; defaults to `application/json` when a body is present. */
+  contentType?: string;
   /** Query parameters; `undefined` values are dropped. */
   query?: Record<string, string | number | boolean | undefined>;
+  /**
+   * How to read the response body. `'json'` (default) parses it; `'text'` returns
+   * the raw string unparsed — needed for endpoints that answer with NDJSON (the
+   * Search results stream is `application/x-ndjson`, one JSON object per line, which
+   * `JSON.parse` cannot read whole).
+   */
+  responseType?: 'json' | 'text';
 };
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
@@ -79,17 +94,21 @@ async function readErrorDetail(response: Response): Promise<string | undefined> 
 }
 
 export async function criblRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { signal, method = 'GET', body, query } = options;
+  const { signal, method = 'GET', body, rawBody, contentType, query, responseType = 'json' } = options;
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), REQUEST_TIMEOUT_MS);
   const signals = signal ? [signal, timeout.signal] : [timeout.signal];
+
+  // A verbatim body wins over one to JSON-encode, so a caller opts into raw bytes
+  // by setting `rawBody`; otherwise an object body is stringified as before.
+  const payload = rawBody ?? (body === undefined ? undefined : JSON.stringify(body));
 
   try {
     const response = await fetch(buildUrl(path, query), {
       method,
       signal: AbortSignal.any(signals),
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: payload === undefined ? undefined : { 'Content-Type': contentType ?? 'application/json' },
+      body: payload,
     });
 
     if (!response.ok) {
@@ -102,11 +121,13 @@ export async function criblRequest<T>(path: string, options: RequestOptions = {}
       );
     }
 
-    if (response.status === 204) return undefined as T;
+    if (response.status === 204) return (responseType === 'text' ? '' : undefined) as T;
     // Parsed from text rather than `response.json()`: an empty body is a valid
     // "nothing here" for the KV store, and a body that is not JSON names itself in
     // the error instead of surfacing as a stream failure with no path attached.
     const text = await response.text();
+    // A raw-text caller (NDJSON results) parses the body itself, line by line.
+    if (responseType === 'text') return text as T;
     if (text === '') return undefined as T;
     try {
       return JSON.parse(text) as T;

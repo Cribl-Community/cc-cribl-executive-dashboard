@@ -1,22 +1,20 @@
 /**
  * Diagnostics.
  *
- * The volume and credit numbers depend on specific internal metric and dimension
- * names, and a Worker Group can fail on its own without the rest noticing. This
- * panel is how an admin sees both: what actually failed, and what the live system
- * reports it can measure — so a wrong metric name is a lookup, not a guess.
+ * The volume and credit numbers depend on the `cribl_metrics` dataset carrying the
+ * expected metric and field names, and a Worker Group can fail on its own without
+ * the rest noticing. This panel is how an admin sees both: what actually failed, and
+ * what a live search returns — so a wrong metric or field name is a query away, not a
+ * guess.
  */
 
 import { useState } from 'react';
 import { Alert, Button, Card, Collapse, Text } from '@capra/core';
-import { metricsEnum } from '../api/cribl.ts';
 import { describeError, isAbort } from '../api/criblFetch.ts';
-import { sampleQueries, type MetricNames, type QuerySample } from '../api/metrics.ts';
+import { sampleSearch, type MetricNames, type SearchSample } from '../api/metrics.ts';
 import { DataTable } from '../components/DataTable.tsx';
 import { formatBytes, formatCount, formatTimestamp } from '../domain/format.ts';
 import type { GroupError } from '../hooks/useDashboardData.ts';
-
-type EnumRow = { name: string; dims: Array<{ name: string; count: number; values: string[] }> };
 
 type DiagnosticsPanelProps = {
   groupErrors: GroupError[];
@@ -31,7 +29,7 @@ type DiagnosticsPanelProps = {
   fetchedAt?: number;
   unresolvedDimValues: string[];
   /**
-   * Volume arrived without the Worker Group dimension, so it covers the whole
+   * Volume arrived without the Worker Group field, so it covers the whole
    * deployment. Worth saying out loud: the group filter looks like it works.
    */
   volumeUnattributed: boolean;
@@ -40,9 +38,9 @@ type DiagnosticsPanelProps = {
 /**
  * One row per distinct failure, with a count.
  *
- * The four volume queries and the credit query are one request each against the
- * Leader, so a single outage repeats the same message five times; collapsing them
- * keeps the cause readable instead of burying it in duplicates.
+ * The four volume queries and the credit query are one search each, so a single
+ * outage repeats the same message five times; collapsing them keeps the cause
+ * readable instead of burying it in duplicates.
  */
 function summarizeErrors(
   groupErrors: GroupError[],
@@ -67,47 +65,26 @@ export function DiagnosticsPanel({
   unresolvedDimValues,
   volumeUnattributed,
 }: DiagnosticsPanelProps) {
-  const [rows, setRows] = useState<EnumRow[]>();
-  const [probing, setProbing] = useState(false);
-  const [probeError, setProbeError] = useState<string>();
-  const [sampled, setSampled] = useState<QuerySample[]>();
-  const [byteMetrics, setByteMetrics] = useState<EnumRow[]>();
+  const [sample, setSample] = useState<SearchSample>();
   const [sampling, setSampling] = useState(false);
   const [sampleError, setSampleError] = useState<string>();
 
-  // Read-only, and only on an explicit press: no probe fires on load.
-  const probe = async () => {
-    setProbing(true);
-    setProbeError(undefined);
-    try {
-      const response = await metricsEnum({ maxValues: 20 });
-      setRows(response.items ?? []);
-    } catch (error) {
-      if (!isAbort(error)) setProbeError(describeError(error));
-    } finally {
-      setProbing(false);
-    }
-  };
-
   /**
-   * The sweep over one hour in 15-minute buckets — enough rows to read, small
-   * enough to be cheap — plus every byte-shaped metric this Leader reports, so a
-   * name mismatch and an empty metrics store are told apart in one press.
+   * Runs the exact ingress query the dashboard uses, over the last hour, straight
+   * against `cribl_metrics` and bypassing the cache — so a name mismatch, an empty
+   * dataset, and a slow job are told apart in one press. Read-only, and only on an
+   * explicit press: no search fires on load.
    */
-  const sample = async () => {
+  const runSample = async () => {
     setSampling(true);
     setSampleError(undefined);
     try {
-      const [samples, names] = await Promise.all([
-        sampleQueries(metricNames.inBytes, metricNames.inputDim, metricNames.groupDim, {
-          earliest: '-1h',
-          latest: 'now',
-          bucketSeconds: 900,
-        }),
-        metricsEnum({ metricNameFilter: 'bytes', maxValues: 8 }).catch(() => undefined),
-      ]);
-      setSampled(samples);
-      setByteMetrics(names?.items ?? []);
+      const result = await sampleSearch(metricNames.inBytes, metricNames.inputDim, metricNames.groupDim, {
+        earliest: '-1h',
+        latest: 'now',
+        bucketSeconds: 900,
+      });
+      setSample(result);
     } catch (error) {
       if (!isAbort(error)) setSampleError(describeError(error));
     } finally {
@@ -116,16 +93,10 @@ export function DiagnosticsPanel({
   };
 
   const failures = summarizeErrors(groupErrors);
-  const expectedNames = [metricNames.inBytes, metricNames.outBytes];
-  const reported = new Set(rows?.map((row) => row.name));
-  const missing = rows ? expectedNames.filter((name) => !reported.has(name)) : [];
-  const reportedDims = new Set(rows?.flatMap((row) => row.dims.map((dim) => dim.name)));
-  const groupDimMissing = rows !== undefined && !reportedDims.has(metricNames.groupDim);
 
-  /** The first variant that produced a usable number, and the rows worth showing. */
-  const productive = sampled?.find((entry) => entry.parsed.bytes > 0);
-  const anyRows = sampled?.some((entry) => entry.rowCount > 0) === true;
-  const shown = productive ?? sampled?.find((entry) => entry.rowCount > 0);
+  // The verdict on the sample: which cause of an empty chart this deployment has.
+  const groupFieldMissing =
+    sample !== undefined && !sample.error && sample.rowCount > 0 && sample.parsed.groups.length === 0;
 
   return (
     <div className="card-stack">
@@ -158,8 +129,8 @@ export function DiagnosticsPanel({
                   ]}
                   rows={failures.map((entry, index) => ({
                     id: `${entry.groupId}-${index}`,
-                    // An empty group id belongs to a Leader-level read, which has no
-                    // one Worker Group to name.
+                    // An empty group id belongs to a deployment-wide search, which has
+                    // no one Worker Group to name.
                     cells: [
                       entry.groupId
                         ? (groupLabels[entry.groupId] ?? entry.groupId)
@@ -183,14 +154,14 @@ export function DiagnosticsPanel({
 
             {volumeUnattributed && (
               <Alert appearance="info" title="Volume covers every Worker Group">
-                {`Metrics reported no ${metricNames.groupDim} dimension, so volume and credits could not be attributed to a Worker Group and cover the whole deployment. The Worker Group filter still applies to health. Probe below for the dimension this deployment uses, then set it in settings.`}
+                {`Search returned no ${metricNames.groupDim} field, so volume and credits could not be attributed to a Worker Group and cover the whole deployment. The Worker Group filter still applies to health. Run the query below to see the fields cribl_metrics actually returns, then set the right one in settings.`}
               </Alert>
             )}
 
             {unresolvedDimValues.length > 0 && (
               <Collapse title={`${unresolvedDimValues.length} unmatched metric dimension value(s)`}>
                 <Text variant="body-sm-normal" color="secondary">
-                  These values were reported by metrics but matched no configured source or
+                  These values came back from cribl_metrics but matched no configured source or
                   destination id. Their volume is still counted, under the raw value.
                 </Text>
                 <ul className="diagnostics-list">
@@ -208,70 +179,23 @@ export function DiagnosticsPanel({
 
       <Card>
         <Card.Header>
-          <Card.Title>Reported metrics</Card.Title>
+          <Card.Title>cribl_metrics search</Card.Title>
           <Card.Description>
             Volume is read from <code>{metricNames.inBytes}</code> and{' '}
-            <code>{metricNames.outBytes}</code>, split by <code>{metricNames.inputDim}</code>,{' '}
-            <code>{metricNames.outputDim}</code>, and <code>{metricNames.groupDim}</code> for the
-            Worker Group. Probe this Leader to confirm those names exist here, and change them in
-            settings if they do not.
+            <code>{metricNames.outBytes}</code> in the <code>cribl_metrics</code> dataset, split by{' '}
+            <code>{metricNames.inputDim}</code> / <code>{metricNames.outputDim}</code> and{' '}
+            <code>{metricNames.groupDim}</code> for the Worker Group. Run the ingress query against
+            the live dataset to confirm those names exist here, and change them in settings if they
+            do not.
           </Card.Description>
         </Card.Header>
         <Card.Content>
           <div className="card-body">
             <div className="multiselect-actions">
-              <Button variant="secondary" size="sm" onClick={probe} pending={probing}>
-                Probe reported metrics
-              </Button>
-              <Button variant="secondary" size="sm" onClick={sample} pending={sampling}>
+              <Button variant="secondary" size="sm" onClick={runSample} pending={sampling}>
                 Run one ingress query
               </Button>
             </div>
-
-            {probeError && (
-              <Alert appearance="danger" title="Could not read metric names">
-                {probeError}
-              </Alert>
-            )}
-
-            {missing.length > 0 && (
-              <Alert appearance="warning" title="Expected metric not reported">
-                {`${missing.join(', ')} did not appear in this deployment's metrics. Volume figures will read zero until the metric name is corrected in settings.`}
-              </Alert>
-            )}
-
-            {groupDimMissing && (
-              <Alert appearance="warning" title="Worker Group dimension not reported">
-                {`No metric reported a ${metricNames.groupDim} dimension. Volume and credits will cover the whole deployment rather than the selected Worker Groups; pick the right dimension from the table below and set it in settings.`}
-              </Alert>
-            )}
-
-            {rows && (
-              <DataTable
-                caption="Metric names reported by this Leader, with their dimensions"
-                columns={[
-                  { key: 'metric', label: 'Metric' },
-                  { key: 'dims', label: 'Dimensions' },
-                  { key: 'values', label: 'Example values' },
-                ]}
-                rows={rows.map((row) => ({
-                  id: row.name,
-                  cells: [
-                    <Text key="metric" variant="body-sm-normal">
-                      {row.name}
-                    </Text>,
-                    <Text key="dims" variant="body-sm-normal" color="secondary">
-                      {row.dims.map((dim) => `${dim.name} (${formatCount(dim.count)})`).join(', ') ||
-                        '—'}
-                    </Text>,
-                    <Text key="values" variant="body-xs-normal" color="secondary">
-                      {row.dims.flatMap((dim) => dim.values).slice(0, 6).join(', ') || '—'}
-                    </Text>,
-                  ],
-                }))}
-                emptyMessage="This Worker Group reported no metrics."
-              />
-            )}
 
             {sampleError && (
               <Alert appearance="danger" title="Could not run the ingress query">
@@ -279,78 +203,56 @@ export function DiagnosticsPanel({
               </Alert>
             )}
 
-            {sampled && (
+            {sample && (
               <>
-                {/* The verdict first: which cause of zero this deployment has. */}
-                {productive ? (
-                  <Alert appearance="success" title={`Data came back: ${productive.label.toLowerCase()}`}>
-                    {`${formatCount(productive.rowCount)} rows read as ${formatBytes(productive.parsed.bytes)} over the last hour.${
-                      productive === sampled[0]
-                        ? ''
-                        : ' The dashboard’s own query returned nothing, so this variant is the difference that matters — see the table below.'
-                    }`}
+                {sample.error ? (
+                  <Alert appearance="danger" title="The search did not complete">
+                    {sample.error}
                   </Alert>
-                ) : anyRows ? (
+                ) : sample.parsed.bytes > 0 ? (
+                  <Alert appearance="success" title="Data came back">
+                    {`${formatCount(sample.rowCount)} rows read as ${formatBytes(sample.parsed.bytes)} over the last hour, across ${formatCount(sample.parsed.groups.length)} Worker Group(s), in ${(sample.elapsedMs / 1000).toFixed(1)}s.`}
+                  </Alert>
+                ) : sample.rowCount > 0 ? (
                   <Alert appearance="warning" title="Rows returned, but no value was read">
                     Rows came back and none carried a number this dashboard could read as bytes.
-                    Compare the field names in the verbatim rows below against the aggregation in
-                    the request.
+                    Compare the field names in the verbatim rows below against the query.
                   </Alert>
                 ) : (
-                  <Alert appearance="warning" title="Every variant returned no rows">
-                    {`${metricNames.inBytes} reported nothing over the last hour under any variant. Either that is not this deployment's name for ingress bytes — check the list below — or the Leader's metrics store holds no ingest for it.`}
+                  <Alert appearance="warning" title="The search returned no rows">
+                    {`${metricNames.inBytes} returned nothing over the last hour. Either that is not this deployment's name for ingress bytes — check the verbatim rows below — or cribl_metrics holds no ingest for it in that window.`}
                   </Alert>
                 )}
 
-                <DataTable
-                  caption="Read-only variants of the ingress query, and what each returned"
-                  columns={[
-                    { key: 'variant', label: 'Variant' },
-                    { key: 'rows', label: 'Rows', numeric: true },
-                    { key: 'read', label: 'Read as', numeric: true },
-                    { key: 'fields', label: 'Row fields' },
-                  ]}
-                  rows={sampled.map((entry) => ({
-                    id: entry.label,
-                    cells: [
-                      <Text key="variant" variant="body-sm-normal">
-                        {entry.label}
-                      </Text>,
-                      entry.error ? '—' : formatCount(entry.rowCount),
-                      entry.error ? '—' : formatBytes(entry.parsed.bytes),
-                      <Text key="fields" variant="body-xs-normal" color="secondary">
-                        {entry.error ?? (Object.keys(entry.rows[0] ?? {}).join(', ') || '—')}
-                      </Text>,
-                    ],
-                  }))}
-                  emptyMessage="No variants ran."
-                />
-
-                {byteMetrics && byteMetrics.length > 0 && (
-                  <Collapse title={`${byteMetrics.length} byte metric(s) reported by this Leader`}>
-                    <ul className="diagnostics-list">
-                      {byteMetrics.map((row) => (
-                        <li key={row.name}>
-                          <Text variant="body-sm-normal">
-                            {`${row.name} — ${row.dims.map((dim) => dim.name).join(', ') || 'no dimensions'}`}
-                          </Text>
-                        </li>
-                      ))}
-                    </ul>
-                  </Collapse>
+                {groupFieldMissing && (
+                  <Alert appearance="warning" title="Worker Group field not returned">
+                    {`No row carried a ${metricNames.groupDim} field. Volume and credits will cover the whole deployment rather than the selected Worker Groups; pick the right field from the verbatim rows below and set it in settings.`}
+                  </Alert>
                 )}
 
-                <Text variant="body-sm-semibold">Request sent, as the dashboard queries it</Text>
-                <pre className="diagnostics-code">
-                  {JSON.stringify(sampled[0].request, null, 2)}
-                </pre>
+                <Text variant="body-sm-semibold">Query sent, as the dashboard runs it</Text>
+                <pre className="diagnostics-code">{sample.query}</pre>
 
-                <Text variant="body-sm-semibold">
-                  {`Rows from “${(shown ?? sampled[0]).label}”, verbatim`}
-                </Text>
-                <pre className="diagnostics-code">
-                  {JSON.stringify((shown ?? sampled[0]).rows, null, 2)}
-                </pre>
+                {sample.parsed.entities.length > 0 && (
+                  <Text variant="body-sm-normal" color="secondary">
+                    {`Entities seen: ${sample.parsed.entities.join(', ')}`}
+                  </Text>
+                )}
+
+                <Text variant="body-sm-semibold">First rows, verbatim</Text>
+                <pre className="diagnostics-code">{JSON.stringify(sample.rows, null, 2)}</pre>
+
+                {sample.rawFirstPage && (
+                  <>
+                    <Text variant="body-sm-semibold">Raw results page, off the wire</Text>
+                    <Text variant="body-sm-normal" color="secondary">
+                      The results stream verbatim (NDJSON — one object per line). One line is the
+                      job summary, which echoes the query and the resolved time window; the rest are
+                      the rows. This is the ground truth when the parsed view looks empty.
+                    </Text>
+                    <pre className="diagnostics-code">{sample.rawFirstPage}</pre>
+                  </>
+                )}
               </>
             )}
           </div>

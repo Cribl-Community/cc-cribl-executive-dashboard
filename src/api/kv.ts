@@ -67,5 +67,16 @@ export async function kvGet<T>(key: string, signal?: AbortSignal): Promise<T | u
 }
 
 export async function kvSet<T>(key: string, value: T, signal?: AbortSignal): Promise<void> {
-  await criblRequest<unknown>(kvPath(key), { method: 'PUT', body: value, signal });
+  // The platform's fetch proxy parses an `application/json` body: it rejects
+  // non-object JSON with a 400 and stores an object as `String(obj)` — the literal
+  // "[object Object]" — so a JSON body never round-trips. A `text/plain` body is
+  // stored verbatim, so the value goes as a JSON *string* under text/plain and
+  // kvGet's read (criblRequest's JSON.parse) turns it back into the value. Verified
+  // against Cloud: application/json → 400 / "[object Object]"; text/plain → intact.
+  await criblRequest<unknown>(kvPath(key), {
+    method: 'PUT',
+    rawBody: JSON.stringify(value),
+    contentType: 'text/plain',
+    signal,
+  });
 }

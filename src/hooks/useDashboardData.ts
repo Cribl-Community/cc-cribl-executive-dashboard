@@ -7,7 +7,7 @@
  * one unreachable group degrades its own rows instead of blanking the dashboard.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   inputStatus,
   listGroups,
@@ -49,8 +49,11 @@ const EMPTY_INVENTORY: Inventory = {
   destinationStatus: [],
 };
 
-/** How far back to look for measured credit consumption. */
-const CREDIT_WINDOW_DAYS = 90;
+/**
+ * How far back to look for measured credit consumption. Capped at the
+ * `cribl_metrics` retention horizon (~30 days), the same wall the time picker honours.
+ */
+const CREDIT_WINDOW_DAYS = 30;
 
 function flatten<T>(entries: Array<{ groupId: string; value: T[] }>): Array<Scoped<T>> {
   return entries.flatMap(({ groupId, value }) =>
@@ -82,6 +85,10 @@ export function useDashboardData(
 ): DashboardData {
   const [refreshToken, setRefreshToken] = useState(0);
   const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
+  // A manual refresh should re-scan Search rather than serve the cache. Tracking the
+  // last token seen tells a refresh-triggered load apart from a range/filter change,
+  // which reuses the cache.
+  const lastRefreshToken = useRef(refreshToken);
 
   const [deployment, setDeployment] = useState<{ groups: ConfigGroup[]; workers: WorkerNode[] }>({
     groups: [],
@@ -156,6 +163,11 @@ export function useDashboardData(
     const signal = controller.signal;
     setScopedLoading(true);
 
+    // A manual refresh (a new token) bypasses the Search cache; an automatic reload
+    // from a range or filter change serves it.
+    const force = refreshToken !== lastRefreshToken.current;
+    lastRefreshToken.current = refreshToken;
+
     (async () => {
       try {
         const bucketSeconds = bucketSecondsFor(range.spanMs);
@@ -169,6 +181,7 @@ export function useDashboardData(
               groupIds,
               metricNames,
               { earliest: range.earliest, latest: range.latest, bucketSeconds },
+              force,
               signal,
             ),
             fetchTotalSeries(
@@ -180,6 +193,7 @@ export function useDashboardData(
                 latest: 'now',
                 bucketSeconds: DAY_SECONDS,
               },
+              force,
               signal,
             ),
           ]);

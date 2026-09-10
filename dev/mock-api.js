@@ -161,6 +161,47 @@
     return entries;
   }
 
+  /**
+   * Synthesizes `cribl_metrics` search rows from a stored job's query and window.
+   *
+   * The volume panel now reads the dataset through Cribl Search, so the mock parses
+   * the KQL the app sends — the metric, the time bucket, and whether an entity split
+   * is present — and reuses the same traffic-shaped generator the old metrics route
+   * used, renaming its fields to the ones a search returns (`worker_group`, and the
+   * measure under the `bytes` alias). This does NOT model Search latency or the async
+   * job states; the real dataset's schema and timing must still be verified in Cloud.
+   */
+  function searchResults(job) {
+    var query = String((job && job.query) || '');
+    var metricMatch = /metric in \("([^"]+)"\)/.exec(query);
+    var metric = metricMatch ? metricMatch[1] : 'total.in_bytes';
+    var isIngress = metric.indexOf('in_bytes') !== -1;
+    var bucketMatch = /bin\(_time,\s*(\d+)s\)/.exec(query);
+    var bucketSeconds = bucketMatch ? Number(bucketMatch[1]) : 3600;
+    // The entity split is present only when the query groups by it.
+    var dimension = /,\s*input(\s|,|$)/.test(query)
+      ? 'input'
+      : /,\s*output(\s|,|$)/.test(query)
+        ? 'output'
+        : '';
+    if (location.hash.indexOf('nodata') !== -1) return [];
+    var entries = allEntities(isIngress ? SOURCES : DESTINATIONS);
+    // The app sends the window as Unix SECONDS (the jobs API reads it that way);
+    // `series` works in ms, so seconds-looking numbers are scaled up. Relative
+    // strings are passed through for `series` to resolve.
+    var earliest = typeof job.earliest === 'number' && job.earliest < 1e12 ? job.earliest * 1000 : job.earliest;
+    var latest = typeof job.latest === 'number' && job.latest < 1e12 ? job.latest * 1000 : job.latest;
+    var rows = series(entries, earliest, latest, bucketSeconds, dimension, isIngress ? 90e6 : 70e6);
+    // Real search returns the Worker Group as `worker_group`, not `__worker_group`.
+    return rows.map(function (row) {
+      var copy = {};
+      Object.keys(row).forEach(function (key) {
+        copy[key === '__worker_group' ? 'worker_group' : key] = row[key];
+      });
+      return copy;
+    });
+  }
+
   function parseRelative(expression) {
     var match = /^-(\d+)([mhd])$/.exec(String(expression));
     if (!match) return -DAY;
@@ -168,6 +209,11 @@
     var unit = { m: 60000, h: 3600000, d: DAY }[match[2]];
     return -value * unit;
   }
+
+  // Search jobs, by id. A job stores the query and window it was created with, so its
+  // results can be synthesized on demand. In-memory, like everything else here.
+  var jobs = {};
+  var jobSeq = 0;
 
   // Starts empty, so the app's own defaults are what renders. Add `#seed` to the URL
   // to preview the configured state — aliases, exclusions, and a live credit term.
@@ -206,7 +252,33 @@
     });
   }
 
-  function route(path, method, body) {
+  /**
+   * The search results stream, the way the real platform answers `/results`:
+   * `application/x-ndjson`, one JSON object per line — the data rows, then a trailing
+   * `SearchJobResults` summary line carrying `isFinished` and the counts. Returning a
+   * plain `{ items: [...] }` object here would let a parser that only handles that
+   * shape pass in dev and still break in Cloud.
+   */
+  function ndjsonResults(job, rows, offset, limit) {
+    var page = rows.slice(offset, offset + limit);
+    var lines = page.map(function (row) { return JSON.stringify(row); });
+    lines.push(
+      JSON.stringify({
+        isFinished: true,
+        offset: offset,
+        limit: limit,
+        persistedEventCount: rows.length,
+        totalEventCount: rows.length,
+        job: { id: job.id, query: job.query, earliest: job.earliest, latest: job.latest, status: 'completed' },
+      }),
+    );
+    return new Response(lines.join('\n') + '\n', {
+      status: 200,
+      headers: { 'Content-Type': 'application/x-ndjson' },
+    });
+  }
+
+  function route(path, method, body, query) {
     var groupMatch = /^\/m\/([^/]+)(\/.*)$/.exec(path);
     var groupId = groupMatch ? decodeURIComponent(groupMatch[1]) : undefined;
     var rest = groupMatch ? groupMatch[2] : path;
@@ -264,6 +336,33 @@
         items = items.filter(function (item) { return pattern.test(item.name); });
       }
       return json({ items: items });
+    }
+
+    // Cribl Search job lifecycle, always under the `default_search` group. Jobs
+    // "complete" immediately here — the mock does not model async latency.
+    if (groupId === 'default_search' && rest.indexOf('/search/jobs') === 0) {
+      var jobRest = rest.slice('/search/jobs'.length); // '', '/<id>', '/<id>/results', '/<id>/cancel'
+      if (jobRest === '' && method === 'POST') {
+        jobSeq += 1;
+        var id = 'job-' + jobSeq;
+        jobs[id] = { id: id, query: (body && body.query) || '', earliest: body && body.earliest, latest: body && body.latest };
+        return json({ items: [{ id: id, status: 'completed' }], count: 1 });
+      }
+      var idMatch = /^\/([^/]+)(\/.*)?$/.exec(jobRest);
+      if (idMatch) {
+        var jobId = idMatch[1];
+        var tail = idMatch[2] || '';
+        if (tail === '/cancel') return json({ items: [{ id: jobId }], count: 1 });
+        if (tail === '/results') {
+          var job = jobs[jobId];
+          if (!job) return ndjsonResults({ id: jobId }, [], 0, 1000);
+          var limit = Number((query && query.get('limit')) || 1000);
+          var offset = Number((query && query.get('offset')) || 0);
+          return ndjsonResults(job, searchResults(job), offset, limit);
+        }
+        // Status: a created job is already done.
+        return json({ items: [{ id: jobId, status: 'completed' }], count: 1 });
+      }
     }
 
     if (path === '/kvstore/keys') {
@@ -333,7 +432,7 @@
         if (signal && signal.aborted) return;
         // A route may throw to imitate a proxy that rejects instead of responding.
         try {
-          resolve(route(path, method, body));
+          resolve(route(path, method, body, query));
         } catch (error) {
           reject(error);
         }

@@ -3,28 +3,32 @@
  *
  * Everything the volume panel needs comes from four aggregation queries: ingress
  * and egress over the selected range, and the same two over a fixed 7-day window
- * for the baseline. Each is a single Leader-level query split by entity *and* by
- * Worker Group, because the metrics store is not group-scoped — attribution comes
- * from a dimension in the results, not from a `/m/:gid` URL. All filtering,
- * roll-up, and exclusion happens client-side, so the headline chart and the
- * per-entity table can never disagree about which sources are counted.
+ * for the baseline. Each is a Cribl Search query against the `cribl_metrics`
+ * dataset, split by entity *and* by Worker Group — the dataset is deployment-wide,
+ * so attribution comes from a field in the results, not from a `/m/:gid` URL. All
+ * filtering, roll-up, and exclusion happens client-side, so the headline chart and
+ * the per-entity table can never disagree about which sources are counted.
+ *
+ * `cribl_metrics` is read instead of the live `/system/metrics/query` store because
+ * that store only retains ~2 days; the dataset holds ~30, which is what the time
+ * picker now offers.
  */
 
-import { metricsQuery } from './cribl.ts';
 import { describeError, isAbort } from './criblFetch.ts';
-import type { MetricsQueryEvent, MetricsQueryRequest } from './types.ts';
+import { cachedSearch } from './searchCache.ts';
+import { runSearchDetailed, type SearchRow } from './search.ts';
 
 /**
- * Metric and dimension names as reported by Cribl internal metrics. These are
- * overridable in settings because a deployment can rename or namespace them, and
- * the diagnostics panel lists what the live system actually reports.
+ * Metric and dimension names as reported in `cribl_metrics`. These are overridable
+ * in settings because a deployment can rename or namespace them, and the diagnostics
+ * panel runs a live query so the actual field names can be read rather than guessed.
  */
 export type MetricNames = {
   inBytes: string;
   outBytes: string;
   inputDim: string;
   outputDim: string;
-  /** Dimension carrying the Worker Group each metric came from. */
+  /** Field carrying the Worker Group each metric came from. */
   groupDim: string;
 };
 
@@ -33,7 +37,9 @@ export const DEFAULT_METRIC_NAMES: MetricNames = {
   outBytes: 'total.out_bytes',
   inputDim: 'input',
   outputDim: 'output',
-  groupDim: '__worker_group',
+  // Cribl Search exposes the Worker Group as `worker_group` (the live metrics store
+  // used `__worker_group`); this is the `cribl_metrics` field name.
+  groupDim: 'worker_group',
 };
 
 /** One entity's byte total inside one time bucket. */
@@ -51,11 +57,21 @@ type MetricRow = EntityBucket & { groupId: string };
 const VALUE_ALIAS = 'bytes';
 
 /**
- * Builds the aggregation expression. Metric names are wrapped in double quotes
- * to match Cribl's documented expression form, e.g. `sum("total.in_bytes")`.
+ * Builds the `cribl_metrics` aggregation query.
+ *
+ * The metric name is matched with `metric in ("…")`, the measure lives in the
+ * `value` field, and the result is bucketed by time with `bin(_time, Ns)` and split
+ * by the entity and Worker Group fields — the same split-bys the parser expects, so
+ * a row reads exactly like a metrics-store event did.
  */
-function sumExpression(metricName: string): string {
-  return `sum("${metricName}").as("${VALUE_ALIAS}")`;
+function buildQuery(
+  metricName: string,
+  dimension: string,
+  groupDim: string,
+  bucketSeconds: number,
+): string {
+  const by = [`_time=bin(_time, ${bucketSeconds}s)`, dimension, groupDim].filter(Boolean).join(', ');
+  return `dataset="cribl_metrics" metric in ("${metricName}") | summarize ${VALUE_ALIAS}=sum(value) by ${by}`;
 }
 
 function toNumber(value: unknown): number {
@@ -68,35 +84,39 @@ function toNumber(value: unknown): number {
 }
 
 /**
- * `_time` is documented as Unix seconds, but tolerate millisecond values so a
- * deployment that reports them does not silently render a chart in 1970.
+ * `_time` may arrive as Unix seconds, Unix milliseconds, or an ISO string depending
+ * on how Search renders the bin, so all three are tolerated — a deployment that
+ * reports one form should not silently render a chart in 1970.
  */
 function toEpochMs(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
   const raw = toNumber(value);
   if (raw <= 0) return undefined;
   return raw > 1e11 ? raw : raw * 1000;
 }
 
-/** A split-by value, or `''` when the dimension is absent from this row. */
-function dimensionValue(event: MetricsQueryEvent, dimension: string): string {
+/** A split-by value, or `''` when the field is absent from this row. */
+function dimensionValue(event: SearchRow, dimension: string): string {
   if (!dimension) return '';
   const value = event[dimension];
   return typeof value === 'string' ? value : '';
 }
 
 /** Row fields that are metadata rather than the aggregated measure. */
-const RESERVED_FIELDS = new Set(['_time', '_raw', '_metric', 'starttime', 'endtime']);
+const RESERVED_FIELDS = new Set(['_time', '_raw', '_metric', 'metric', 'starttime', 'endtime']);
 
 /**
  * Reads the aggregated number out of a result row.
  *
- * The `.as("bytes")` alias is preferred, but not trusted: if a deployment returns
- * the column under its expression name instead, every figure on the page would read
- * zero while every request succeeded — the least diagnosable failure available. So
- * fall back to the row's only other number, skipping timestamps and the split-by
- * dimensions.
+ * The `bytes` alias is preferred, but not trusted: if a deployment returns the
+ * column under another name, every figure on the page would read zero while every
+ * request succeeded — the least diagnosable failure available. So fall back to the
+ * row's only other number, skipping timestamps and the split-by fields.
  */
-function aggregatedValue(event: MetricsQueryEvent, splitBys: string[]): number {
+function aggregatedValue(event: SearchRow, splitBys: string[]): number {
   const aliased = event[VALUE_ALIAS];
   if (typeof aliased === 'number' || typeof aliased === 'string') return toNumber(aliased);
   for (const [field, value] of Object.entries(event)) {
@@ -106,11 +126,7 @@ function aggregatedValue(event: MetricsQueryEvent, splitBys: string[]): number {
   return 0;
 }
 
-function parseRows(
-  events: MetricsQueryEvent[] | undefined,
-  dimension: string,
-  groupDim: string,
-): MetricRow[] {
+function parseRows(events: SearchRow[] | undefined, dimension: string, groupDim: string): MetricRow[] {
   if (!events) return [];
   const splitBys = [dimension, groupDim].filter(Boolean);
   const rows: MetricRow[] = [];
@@ -147,11 +163,9 @@ const RELATIVE_PATTERN = /^-(\d+)([smhdw])$/;
 /**
  * Resolves a range endpoint to Unix ms.
  *
- * The API documents relative strings (`-24h`, `now`) as acceptable, but a
- * deployment that does not resolve them answers with an empty result set and a
- * 200 — a zero that looks like "no traffic" rather than "no range". Absolute
- * milliseconds are accepted everywhere and cannot be misread, so that is what
- * goes on the wire; the relative form stays in the UI layer, where it belongs.
+ * Absolute milliseconds go on the wire because they cannot be misread; the relative
+ * form stays in the UI layer, and is used only to key the cache, where "the last 7
+ * days" should hit the same entry across loads even as the absolute window shifts.
  */
 export function toAbsoluteMs(value: string | number, now: number): number {
   if (typeof value === 'number') return value;
@@ -159,144 +173,128 @@ export function toAbsoluteMs(value: string | number, now: number): number {
   if (trimmed === '' || trimmed === 'now') return now;
   const match = RELATIVE_PATTERN.exec(trimmed);
   if (match) return now - Number(match[1]) * RELATIVE_UNITS[match[2]];
-  // Only this app's own presets reach here, so an unparsed value is a bug, not
-  // user input; `now` keeps the request valid and the panel visibly empty.
+  // Only this app's own presets reach here, so an unparsed value is a bug, not user
+  // input; `now` keeps the request valid and the panel visibly empty.
   return now;
 }
 
-function queryBody(
-  metricName: string,
-  dimension: string,
-  groupDim: string,
-  request: SeriesRequest,
-  now = Date.now(),
-): MetricsQueryRequest {
-  const splitBys = [dimension, groupDim].filter(Boolean);
-  return {
-    earliest: toAbsoluteMs(request.earliest, now),
-    latest: toAbsoluteMs(request.latest, now),
-    aggs: {
-      aggregations: [sumExpression(metricName)],
-      ...(splitBys.length > 0 ? { splitBys } : {}),
-      timeWindowSeconds: request.bucketSeconds,
-    },
-  };
+/**
+ * Resolves a range endpoint to **Unix seconds**, the unit the Search jobs API reads
+ * `earliest`/`latest` in. Sending milliseconds there is silently catastrophic: the
+ * value is interpreted as seconds, so the window lands ~50,000 years out and the job
+ * completes with zero rows — a success that looks exactly like an idle deployment.
+ */
+export function toEpochSeconds(value: string | number, now: number): number {
+  return Math.floor(toAbsoluteMs(value, now) / 1000);
 }
 
-/** One query: byte totals bucketed over time, split by entity and Worker Group. */
+/**
+ * One query: byte totals bucketed over time, split by entity and Worker Group.
+ *
+ * The cache key is the query text plus the *relative* range, so an automatic reload
+ * for the same range reuses the last scan; `force` (a manual refresh) skips the read
+ * and re-scans.
+ */
 async function queryRows(
   metricName: string,
   dimension: string,
   groupDim: string,
   request: SeriesRequest,
+  force: boolean,
   signal?: AbortSignal,
 ): Promise<MetricRow[]> {
-  const response = await metricsQuery(queryBody(metricName, dimension, groupDim, request), signal);
-  return parseRows(response.results, dimension, groupDim);
+  const query = buildQuery(metricName, dimension, groupDim, request.bucketSeconds);
+  const now = Date.now();
+  const cacheKey = `${query}|${request.earliest}|${request.latest}`;
+  const rows = await cachedSearch(
+    cacheKey,
+    {
+      query,
+      earliest: toEpochSeconds(request.earliest, now),
+      latest: toEpochSeconds(request.latest, now),
+    },
+    force,
+    signal,
+  );
+  return parseRows(rows, dimension, groupDim);
 }
 
-export type QuerySample = {
-  /** What was varied, in words, so a passing row names its own fix. */
-  label: string;
-  request: MetricsQueryRequest;
+/** A diagnostic run of one query, reported raw so field names can be read. */
+export type SearchSample = {
+  query: string;
+  earliest: string | number;
+  latest: string | number;
   rowCount: number;
   /** The first rows, verbatim, so field names can be read rather than inferred. */
-  rows: MetricsQueryEvent[];
+  rows: SearchRow[];
+  /**
+   * The first results page exactly as it came off the wire (NDJSON), truncated. The
+   * verbatim bytes are the ground truth when the parsed view is empty or surprising —
+   * they show the real envelope, field names, and the job's echoed time window.
+   */
+  rawFirstPage: string;
   /** What this app made of the whole response. */
   parsed: { buckets: number; bytes: number; entities: string[]; groups: string[] };
+  /** Wall-clock time the whole job took, submit to results. */
+  elapsedMs: number;
   error?: string;
 };
 
-function readSample(
-  label: string,
-  request: MetricsQueryRequest,
-  results: MetricsQueryEvent[],
-  dimension: string,
-  groupDim: string,
-): QuerySample {
-  const rows = parseRows(results, dimension, groupDim);
-  return {
-    label,
-    request,
-    rowCount: results.length,
-    rows: results.slice(0, 3),
-    parsed: {
-      buckets: new Set(rows.map((row) => row.t)).size,
-      bytes: rows.reduce((sum, row) => sum + row.bytes, 0),
-      entities: [...new Set(rows.map((row) => row.dimValue).filter(Boolean))].slice(0, 12),
-      groups: [...new Set(rows.map((row) => row.groupId).filter(Boolean))],
-    },
-  };
-}
+/** Cap the raw dump so a large first page cannot bloat the diagnostics view. */
+const RAW_SAMPLE_LIMIT = 4000;
 
 /**
- * Runs a small sweep of read-only variants of the volume query and reports the raw
- * response of each.
+ * Runs the real ingress query over a small window and reports what came back.
  *
- * An empty result and a 200 is the least diagnosable answer the API can give: a
- * wrong metric name, an unresolved relative time range, an unsupported split-by, and
- * genuinely idle traffic all look identical from the panels. Each variant changes
- * exactly one of those things, so whichever one returns rows names the fix. All four
- * are `POST`-shaped reads that mutate nothing.
+ * An empty result and a success is the least diagnosable answer Search can give: a
+ * wrong metric name, a wrong field name, and a genuinely idle deployment all look
+ * identical from the panel. This runs the exact query the dashboard uses (bypassing
+ * the cache) so an admin can read the verbatim rows and timing and tell them apart.
  */
-export async function sampleQueries(
+export async function sampleSearch(
   metricName: string,
   dimension: string,
   groupDim: string,
   request: SeriesRequest,
   signal?: AbortSignal,
-): Promise<QuerySample[]> {
+): Promise<SearchSample> {
+  const query = buildQuery(metricName, dimension, groupDim, request.bucketSeconds);
   const now = Date.now();
-  const absolute = queryBody(metricName, dimension, groupDim, request, now);
-
-  const variants: Array<{ label: string; request: MetricsQueryRequest; dimension: string }> = [
-    { label: 'As the dashboard queries it', request: absolute, dimension },
-    {
-      label: 'Relative time strings instead of Unix ms',
-      request: { ...absolute, earliest: '-1h', latest: 'now' },
-      dimension,
-    },
-    {
-      label: 'No split-bys',
-      request: { ...absolute, aggs: { ...absolute.aggs, splitBys: undefined } },
-      dimension: '',
-    },
-    {
-      label: 'Cumulative instead of time buckets',
-      request: {
-        ...absolute,
-        aggs: { aggregations: absolute.aggs.aggregations, cumulative: true },
+  const started = Date.now();
+  try {
+    const { rows, rawFirstPage } = await runSearchDetailed(
+      { query, earliest: toEpochSeconds(request.earliest, now), latest: toEpochSeconds(request.latest, now) },
+      signal,
+    );
+    const parsed = parseRows(rows, dimension, groupDim);
+    return {
+      query,
+      earliest: request.earliest,
+      latest: request.latest,
+      rowCount: rows.length,
+      rows: rows.slice(0, 3),
+      rawFirstPage: rawFirstPage.slice(0, RAW_SAMPLE_LIMIT),
+      parsed: {
+        buckets: new Set(parsed.map((row) => row.t)).size,
+        bytes: parsed.reduce((sum, row) => sum + row.bytes, 0),
+        entities: [...new Set(parsed.map((row) => row.dimValue).filter(Boolean))].slice(0, 12),
+        groups: [...new Set(parsed.map((row) => row.groupId).filter(Boolean))],
       },
-      dimension: '',
-    },
-  ];
-
-  const samples: QuerySample[] = [];
-  for (const variant of variants) {
-    try {
-      const response = await metricsQuery(variant.request, signal);
-      samples.push(
-        readSample(
-          variant.label,
-          variant.request,
-          response.results ?? [],
-          variant.dimension,
-          groupDim,
-        ),
-      );
-    } catch (error) {
-      if (isAbort(error)) return samples;
-      samples.push({
-        label: variant.label,
-        request: variant.request,
-        rowCount: 0,
-        rows: [],
-        parsed: { buckets: 0, bytes: 0, entities: [], groups: [] },
-        error: describeError(error),
-      });
-    }
+      elapsedMs: Date.now() - started,
+    };
+  } catch (error) {
+    return {
+      query,
+      earliest: request.earliest,
+      latest: request.latest,
+      rowCount: 0,
+      rows: [],
+      rawFirstPage: '',
+      parsed: { buckets: 0, bytes: 0, entities: [], groups: [] },
+      elapsedMs: Date.now() - started,
+      error: describeError(error),
+    };
   }
-  return samples;
 }
 
 /** Per-group buckets for one direction, keeping partial success across groups. */
@@ -305,7 +303,7 @@ export type DirectionResult = {
   /** A `groupId` of `''` means the one query failed, not one group's share of it. */
   errors: Array<{ groupId: string; error: unknown }>;
   /**
-   * Results arrived, but none carried the Worker Group dimension: the figures are
+   * Results arrived, but none carried the Worker Group field: the figures are
    * deployment-wide and the Worker Group filter did not narrow them.
    */
   unattributed: boolean;
@@ -316,12 +314,12 @@ const EMPTY_DIRECTION: DirectionResult = { byGroup: [], errors: [], unattributed
 /**
  * Splits rows into the per-group shape the panels consume.
  *
- * Groups are filtered here rather than in the query, with a `where` clause: a
- * server-side filter would stake the entire figure on the group dimension being
- * named exactly as configured, whereas this way a wrong name costs the group
- * *labels* and not the *volume*. So when no row carries the dimension at all,
- * everything is kept under an empty group id and flagged `unattributed` — a
- * deployment-wide total the panel can still show, and diagnostics can explain.
+ * Groups are filtered here rather than in the query: a server-side filter would
+ * stake the entire figure on the group field being named exactly as configured,
+ * whereas this way a wrong name costs the group *labels* and not the *volume*. So
+ * when no row carries the field at all, everything is kept under an empty group id
+ * and flagged `unattributed` — a deployment-wide total the panel can still show, and
+ * diagnostics can explain.
  */
 function attribute(
   rows: MetricRow[],
@@ -352,10 +350,11 @@ export async function fetchDirection(
   dimension: string,
   groupDim: string,
   request: SeriesRequest,
+  force: boolean,
   signal?: AbortSignal,
 ): Promise<DirectionResult> {
   try {
-    const rows = await queryRows(metricName, dimension, groupDim, request, signal);
+    const rows = await queryRows(metricName, dimension, groupDim, request, force, signal);
     return { ...attribute(rows, groupIds), errors: [] };
   } catch (error) {
     // A cancelled load is not a failure to report; the caller discards the result.
@@ -376,11 +375,12 @@ export async function fetchTotalSeries(
   metricName: string,
   groupDim: string,
   request: SeriesRequest,
+  force: boolean,
   signal?: AbortSignal,
 ): Promise<{ points: Array<{ t: number; bytes: number }>; errors: Array<{ groupId: string; error: unknown }> }> {
   let result: DirectionResult;
   try {
-    const rows = await queryRows(metricName, '', groupDim, request, signal);
+    const rows = await queryRows(metricName, '', groupDim, request, force, signal);
     result = { ...attribute(rows, groupIds), errors: [] };
   } catch (error) {
     if (isAbort(error)) return { points: [], errors: [] };
@@ -412,13 +412,15 @@ export const DAY_SECONDS = 86_400;
 /**
  * Fetches everything the volume panel needs.
  *
- * The baseline window is fixed at 7 days regardless of the selected time range,
- * so "compared to the norm" always means the same thing.
+ * The baseline window is fixed at 7 days regardless of the selected time range, so
+ * "compared to the norm" always means the same thing. `force` (a manual refresh)
+ * re-scans every query instead of serving the cache.
  */
 export async function fetchVolume(
   groupIds: string[],
   metrics: MetricNames,
   range: SeriesRequest,
+  force: boolean,
   signal?: AbortSignal,
 ): Promise<VolumeFetch> {
   const baseline: SeriesRequest = {
@@ -428,10 +430,10 @@ export async function fetchVolume(
   };
 
   const [ingress, egress, ingressBaseline, egressBaseline] = await Promise.all([
-    fetchDirection(groupIds, metrics.inBytes, metrics.inputDim, metrics.groupDim, range, signal),
-    fetchDirection(groupIds, metrics.outBytes, metrics.outputDim, metrics.groupDim, range, signal),
-    fetchDirection(groupIds, metrics.inBytes, metrics.inputDim, metrics.groupDim, baseline, signal),
-    fetchDirection(groupIds, metrics.outBytes, metrics.outputDim, metrics.groupDim, baseline, signal),
+    fetchDirection(groupIds, metrics.inBytes, metrics.inputDim, metrics.groupDim, range, force, signal),
+    fetchDirection(groupIds, metrics.outBytes, metrics.outputDim, metrics.groupDim, range, force, signal),
+    fetchDirection(groupIds, metrics.inBytes, metrics.inputDim, metrics.groupDim, baseline, force, signal),
+    fetchDirection(groupIds, metrics.outBytes, metrics.outputDim, metrics.groupDim, baseline, force, signal),
   ]);
 
   return { ingress, egress, ingressBaseline, egressBaseline };

@@ -11,9 +11,6 @@ export type Selection = 'all' | string[];
 
 export type Filters = {
   timeRangeId: string;
-  /** Set only when `timeRangeId` is `custom`, as local-midnight Unix ms. */
-  customStart?: number;
-  customEnd?: number;
   groups: Selection;
   /**
    * Worker Nodes, inside the selected Worker Groups. Only node-level figures can
@@ -26,7 +23,7 @@ export type Filters = {
 };
 
 export const DEFAULT_FILTERS: Filters = {
-  timeRangeId: '24h',
+  timeRangeId: '7d',
   groups: 'all',
   nodes: 'all',
   sources: 'all',

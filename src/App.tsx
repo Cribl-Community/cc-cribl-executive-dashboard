@@ -36,7 +36,7 @@ import {
   saveSettings,
   type DashboardSettings,
 } from './domain/settings.ts';
-import { bucketSecondsFor, customRange, findPreset } from './domain/time.ts';
+import { bucketSecondsFor, findPreset } from './domain/time.ts';
 import { buildDirectionVolume } from './domain/volume.ts';
 import { useDashboardData } from './hooks/useDashboardData.ts';
 import { CreditsPanel } from './panels/CreditsPanel.tsx';
@@ -45,8 +45,12 @@ import { HealthPanel } from './panels/HealthPanel.tsx';
 import { SettingsDrawer } from './panels/SettingsDrawer.tsx';
 import { VolumePanel } from './panels/VolumePanel.tsx';
 
-/** Days of measured ingest behind the credit estimate, matching the hook's window. */
-const CREDIT_WINDOW_DAYS = 90;
+/**
+ * Days of measured ingest behind the credit estimate, matching the hook's window.
+ * Capped at the `cribl_metrics` retention horizon — the estimate can only be built
+ * from ingest the dataset still holds.
+ */
+const CREDIT_WINDOW_DAYS = 30;
 
 /** One option per distinct id, annotated with the groups it appears in. */
 function toOptions(entities: Array<{ id: string; groupLabel: string }>): Option[] {
@@ -86,12 +90,7 @@ function App() {
     return () => controller.abort();
   }, []);
 
-  const range = useMemo(() => {
-    if (filters.timeRangeId === 'custom' && filters.customStart && filters.customEnd) {
-      return customRange(filters.customStart, filters.customEnd);
-    }
-    return findPreset(filters.timeRangeId);
-  }, [filters.timeRangeId, filters.customStart, filters.customEnd]);
+  const range = useMemo(() => findPreset(filters.timeRangeId), [filters.timeRangeId]);
 
   const metricNames = settingsReady ? settings.metricNames : DEFAULT_METRIC_NAMES;
   const data = useDashboardData(filters, range, metricNames);

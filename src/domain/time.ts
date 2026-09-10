@@ -1,9 +1,13 @@
 /**
  * Time range presets and bucketing.
  *
- * Ranges are stored as relative Cribl expressions (`-24h`) so a shared or
- * reloaded dashboard keeps meaning "the last 24 hours" rather than freezing a
- * past window. Custom ranges store absolute Unix ms.
+ * Ranges are stored as relative Cribl expressions (`-7d`) so a shared or reloaded
+ * dashboard keeps meaning "the last 7 days" rather than freezing a past window.
+ *
+ * The range only goes back 30 days because that is how far the `cribl_metrics`
+ * dataset the volume panel reads retains data; asking for more returns empty buckets
+ * that look like an outage. There is deliberately no custom absolute range for the
+ * same reason — every offered window is one the data can actually answer.
  */
 
 export type TimeRange = {
@@ -16,35 +20,19 @@ export type TimeRange = {
   spanMs: number;
 };
 
-const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 export const TIME_PRESETS: TimeRange[] = [
-  { id: '1h', label: 'Last hour', earliest: '-1h', latest: 'now', spanMs: HOUR },
-  { id: '4h', label: 'Last 4 hours', earliest: '-4h', latest: 'now', spanMs: 4 * HOUR },
-  { id: '24h', label: 'Last 24 hours', earliest: '-24h', latest: 'now', spanMs: DAY },
+  { id: '1d', label: 'Last 1 day', earliest: '-1d', latest: 'now', spanMs: DAY },
   { id: '7d', label: 'Last 7 days', earliest: '-7d', latest: 'now', spanMs: 7 * DAY },
+  { id: '14d', label: 'Last 14 days', earliest: '-14d', latest: 'now', spanMs: 14 * DAY },
   { id: '30d', label: 'Last 30 days', earliest: '-30d', latest: 'now', spanMs: 30 * DAY },
-  { id: '90d', label: 'Last 90 days', earliest: '-90d', latest: 'now', spanMs: 90 * DAY },
 ];
 
-export const DEFAULT_TIME_RANGE_ID = '24h';
+export const DEFAULT_TIME_RANGE_ID = '7d';
 
 export function findPreset(id: string): TimeRange {
-  return TIME_PRESETS.find((preset) => preset.id === id) ?? TIME_PRESETS[2];
-}
-
-/** Builds a custom absolute range from two local dates (inclusive of the end day). */
-export function customRange(startMs: number, endMs: number): TimeRange {
-  const earliest = Math.min(startMs, endMs);
-  const latest = Math.max(startMs, endMs) + DAY - 1;
-  return {
-    id: 'custom',
-    label: 'Custom range',
-    earliest,
-    latest,
-    spanMs: latest - earliest,
-  };
+  return TIME_PRESETS.find((preset) => preset.id === id) ?? TIME_PRESETS[1];
 }
 
 /**

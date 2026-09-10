@@ -11,9 +11,6 @@ import type {
   ConfigGroup,
   EntityConfig,
   EntityStatus,
-  MetricsEnumResponse,
-  MetricsQueryRequest,
-  MetricsQueryResponse,
   Paginated,
   SystemInfo,
   UsageMetrics,
@@ -84,42 +81,6 @@ export async function outputStatus(groupId: string, signal?: AbortSignal): Promi
     { signal, query: { ...PAGE_QUERY } },
   );
   return response.items ?? [];
-}
-
-/**
- * Aggregates internal metrics. Leader-scoped, deliberately: `/m/:gid` scopes
- * *configuration*, and the metrics store is not configuration — a real deployment
- * answers `POST /m/<gid>/system/metrics/query` with
- * `404 Cannot POST /api/v1/system/metrics/query`. Worker Group attribution comes
- * from a dimension in the results instead of from the URL.
- */
-export async function metricsQuery(
-  request: MetricsQueryRequest,
-  signal?: AbortSignal,
-): Promise<MetricsQueryResponse> {
-  return criblRequest<MetricsQueryResponse>('/system/metrics/query', {
-    method: 'POST',
-    body: request,
-    signal,
-  });
-}
-
-/**
- * Enumerates the metric names and dimensions the deployment actually reports.
- *
- * The volume panel depends on specific metric and dimension names; this is how
- * the diagnostics panel proves what is available instead of guessing. Leader-scoped,
- * for the same reason as the query above.
- */
-export async function metricsEnum(
-  body: { metricNameFilter?: string; maxValues?: number; earliest?: number },
-  signal?: AbortSignal,
-): Promise<MetricsEnumResponse> {
-  return criblRequest<MetricsEnumResponse>('/system/metrics/enum', {
-    method: 'POST',
-    body,
-    signal,
-  });
 }
 
 export async function systemInfo(signal?: AbortSignal): Promise<SystemInfo | undefined> {
